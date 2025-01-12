@@ -1,6 +1,14 @@
 import requests
 import time
 from datetime import datetime
+from playsound import playsound
+
+SOUNDS_DIR = "./Sounds"
+SOUND_FILES = {
+    "EEW": "Eew.mp3",
+    "Tsunami": "Tsunami.mp3",
+    "Earthquake": "Earthquake.mp3",
+}
 
 def fetch_data(url, params=None, timeout=5):
     try:
@@ -10,6 +18,14 @@ def fetch_data(url, params=None, timeout=5):
     except requests.RequestException as e:
         print(f"データ取得エラー: {e}")
         return None
+
+def play_sound(event_type):
+    sound_file = SOUND_FILES.get(event_type)
+    if sound_file:
+        try:
+            playsound(f"{SOUNDS_DIR}/{sound_file}")
+        except Exception as e:
+            print(f"音声再生エラー: {e}")
 
 def speak_bouyomi(text='ゆっくりしていってね', voice=0, volume=-1, speed=-1, tone=-1):
     try:
@@ -37,7 +53,10 @@ def process_eew_data(data, last_message):
         f"震源地は{hypocenter}、震源の深さは{depth}キロメートル、"
         f"地震の規模を示すマグニチュードは{magnitude}と推定されています。"
     )
-
+    
+    if message != last_message:
+        play_sound("EEW")
+        
     return message if message != last_message else None
 
 def process_tsunami_data(data, seen_ids):
@@ -88,6 +107,7 @@ def process_tsunami_data(data, seen_ids):
     for message in messages:
         print(message + "\n")
         speak_bouyomi(message)
+        play_sound("Tsunami")
 
 def convert_scale_to_text(scale):
     return {
@@ -173,11 +193,12 @@ def display_earthquake_info(data):
 
     print(text)
     speak_bouyomi(text)
+    play_sound("Earthquake")
 
 def main():
     urls = {
         'eew': "https://api.wolfx.jp/jma_eew.json",
-        'tsunami': "https://api-v2-sandbox.p2pquake.net/v2/history?codes=552&limit=10",
+        'tsunami': "https://api-v2-sandbox.p2pquake.net/v2/history?codes=552&limit=1",
         'earthquake': "https://api-v2-sandbox.p2pquake.net/v2/history?codes=551&limit=1"
     }
 
