@@ -25,73 +25,65 @@ def process_eew_data(data, last_message):
     if not data:
         return None
 
-    title = data.get('Title', '不明').split('（')
-    title_suffix = title[1].rstrip('）') if len(title) > 1 else '不明'
+    title_suffix = "警報" if data.get('isWarn') else "予報"
     max_intensity = data.get('MaxIntensity', '不明')
     hypocenter = data.get('Hypocenter', '不明')
     depth = data.get('Depth', '不明')
     magnitude = data.get('Magunitude', '不明')
-    report_type = "最終報" if data.get('isFinal', False) else f"第{data.get('Serial', -1)}報"
+    report_type = f"最終報" if data.get('isFinal') else f"第{data.get('Serial', '不明')}報"
 
-    message = (f"緊急地震速報（{title_suffix}）{report_type}。推定最大震度は{max_intensity}です。"
-               f"震源地は{hypocenter}、震源の深さは{depth}キロメートル、"
-               f"地震の規模を示すマグニチュードは{magnitude}と推定されています。")
+    message = (
+        f"緊急地震速報（{title_suffix}）{report_type}。推定最大震度は{max_intensity}です。"
+        f"震源地は{hypocenter}、震源の深さは{depth}キロメートル、"
+        f"地震の規模を示すマグニチュードは{magnitude}と推定されています。"
+    )
 
     return message if message != last_message else None
 
 def process_tsunami_data(data, seen_ids):
-    messages = []
-    warning_levels = ["大津波警報", "津波警報", "津波注意報"]
+    messages, warning_levels = [], ["大津波警報", "津波警報", "津波注意報"]
+    grade_map = {"MajorWarning": "大津波警報", "Warning": "津波警報", "Watch": "津波注意報"}
+    condition_map = {
+        "ただちに津波来襲と予測": "ただちに津波来襲と予測されます",
+        "津波到達中と推測": "津波到達中と推測されます",
+        "第１波の到達を確認": "第１波の到達を確認しました"
+    }
 
     for item in sorted(data, key=lambda x: x.get('time', ''), reverse=True):
-        item_id = item.get("id")
-        if item_id in seen_ids:
+        if (item_id := item.get("id")) in seen_ids:
             continue
         seen_ids.add(item_id)
-
         if item.get("cancelled", False):
             messages.append("津波情報。津波予報が解除されました。")
             continue
 
         warnings = {level: [] for level in warning_levels}
         for area in item.get("areas", []):
-            grade = area['grade']
-            arrival_time_raw = area['firstHeight'].get('arrivalTime', '不明')
-            try:
-                if arrival_time_raw != "不明":
-                    date_part, time_part = arrival_time_raw.split(" ")
-                    day = int(date_part.split("/")[-1])
-                    hour, minute = time_part.split(":")[:2]
+            grade = grade_map.get(area['grade'], '')
+            if not grade:
+                continue
+            arrival_time = "不明"
+            if (arrival_raw := area['firstHeight'].get('arrivalTime', '不明')) != "不明":
+                try:
+                    day, (hour, minute) = int(arrival_raw.split(" ")[0].split("/")[-1]), arrival_raw.split(" ")[1].split(":")[:2]
                     arrival_time = f"{day}日{hour}時{minute}分"
-                else:
-                    arrival_time = "不明"
-            except ValueError:
-                arrival_time = "不明"
-
-            condition = area['firstHeight'].get('condition', '')
-            additional_message = {
-                "ただちに津波来襲と予測": "ただちに津波来襲と予測されます",
-                "津波到達中と推測": "津波到達中と推測されます",
-                "第１波の到達を確認": "第１波の到達を確認しました"
-            }.get(condition, f"早いところで、{arrival_time}ごろ到達とみられます" if arrival_time != "不明" else "")
-
-            area_info = {
+                except ValueError:
+                    pass
+            warnings[grade].append({
                 "地域": area['name'],
                 "予想の高さ": area.get('maxHeight', {}).get('description', '不明'),
-                "到達予測": additional_message
-            }
-
-            warnings.get({
-                "MajorWarning": "大津波警報",
-                "Warning": "津波警報",
-                "Watch": "津波注意報"
-            }.get(grade, ''), []).append(area_info)
+                "到達予測": condition_map.get(
+                    condition := area['firstHeight'].get('condition', ''),
+                    f"早いところで、{arrival_time}ごろ到達とみられます" if arrival_time != "不明" else ""
+                )
+            })
 
         for grade_name in warning_levels:
             if warnings[grade_name]:
-                message_lines = [f"津波情報。{grade_name} が発表されました。", f"{grade_name} が発表されている地域をお伝えします。"]
-                message_lines.extend(f"{info['地域']}、予想の高さ {info['予想の高さ']}、{info['到達予測']}" for info in warnings[grade_name])
-                messages.append("\n".join(message_lines))
+                messages.append("\n".join(
+                    [f"津波情報。{grade_name} が発表されました。", f"{grade_name} が発表されている地域をお伝えします。"] +
+                    [f"{info['地域']}、予想の高さ {info['予想の高さ']}、{info['到達予測']}" for info in warnings[grade_name]]
+                ))
 
     for message in messages:
         print(message + "\n")
@@ -105,13 +97,14 @@ def convert_scale_to_text(scale):
     }.get(scale, "不明")
 
 def convert_tsunami(tsunami, domestic=True):
-    return ({
-        "None": "" if not domestic else "この地震による津波の心配はありません。",
+    domestic_texts = {
+        "None": "この地震による津波の心配はありません。",
         "Checking": "津波の有無については現在調査中です。今後の情報に警戒してください。",
         "NonEffective": "この地震により若干の海面変動が予想されますが、津波被害の心配はありません。",
         "Watch": "この地震により、津波注意報が発表されました。",
         "Warning": "この地震により、現在津波情報等を発表中です。"
-    } if domestic else {
+    }
+    foreign_texts = {
         "None": "この地震による津波の心配はありません。",
         "Checking": "津波の有無については現在調査中です。今後の情報に警戒してください。",
         "NonEffectiveNearby": "震源の近傍では小さな津波が発生するかもしれませんが、被害の心配はありません。",
@@ -121,7 +114,8 @@ def convert_tsunami(tsunami, domestic=True):
         "WarningIndian": "インド洋では津波の可能性があります。",
         "WarningIndianWide": "インド洋の広域で津波の可能性があります。",
         "Potential": "一般にこの規模では津波の可能性があります。"
-    }).get(tsunami, "")
+    }
+    return (domestic_texts if domestic else foreign_texts).get(tsunami, "")
 
 def convert_type(type_str):
     return {
@@ -138,51 +132,41 @@ def display_earthquake_info(data):
     text = f"{type_info}。"
 
     earthquake = data.get('earthquake', {})
-    occurrence_time = earthquake.get('time', '不明')
-    if occurrence_time != '不明':
-        dt = datetime.strptime(occurrence_time, '%Y/%m/%d %H:%M:%S')
-        occurrence_time = f"{dt.hour}時{dt.minute}分ごろ"
-
-    text += f"{occurrence_time}地震がありました。"
+    time = earthquake.get('time', '不明')
+    if time != '不明':
+        dt = datetime.strptime(time, '%Y/%m/%d %H:%M:%S')
+        text += f"{dt.hour}時{dt.minute}分ごろ地震がありました。"
 
     hypocenter = earthquake.get('hypocenter', {})
-    depth = hypocenter.get('depth', -1)
-    depth_str = "ごく浅い" if depth == 0 else (f"{depth}キロメートル" if depth > 0 else None)
-    magnitude = hypocenter.get('magnitude', -1)
-    magnitude_str = f"マグニチュードは{magnitude:.1f}" if magnitude != -1 else None
-
     if hypocenter.get('name'):
         text += f"震源地は{hypocenter['name']}、"
-    if depth_str:
-        text += f"震源の深さは{depth_str}。"
-    if magnitude_str:
-        text += f"地震の規模を示す{magnitude_str}と推定されています。"
+    if (depth := hypocenter.get('depth', -1)) >= 0:
+        text += f"震源の深さは{'ごく浅い' if depth == 0 else f'{depth}キロメートル'}。"
+    if (magnitude := hypocenter.get('magnitude', -1)) >= 0:
+        text += f"地震の規模を示すマグニチュードは{magnitude:.1f}と推定されています。"
 
-    if type_info != "遠地地震情報":
-        domestic_tsunami_text = convert_tsunami(earthquake.get('domesticTsunami', ''))
-        if domestic_tsunami_text:
-            text += domestic_tsunami_text
+    text += convert_tsunami(earthquake.get('domesticTsunami', ''), domestic=True)
 
-    foreign_tsunami_text = convert_tsunami(earthquake.get('foreignTsunami', ''), domestic=False)
-    if foreign_tsunami_text:
-        text += foreign_tsunami_text
+    foreign_tsunami = earthquake.get('foreignTsunami', None)
+    if foreign_tsunami not in [None, "Unknown"]:
+        text += convert_tsunami(foreign_tsunami, domestic=False)
 
     points = data.get('points', [])
     if points:
         max_scale_region = {}
         for point in points:
-            pref, scale = point.get('pref', '不明'), point.get('scale', -1)
-            if scale > 0:
+            if (scale := point.get('scale', -1)) > 0:
+                pref = point.get('pref', '不明')
                 max_scale_region[pref] = max(max_scale_region.get(pref, 0), scale)
 
         max_scale = max(max_scale_region.values(), default=0)
         if max_scale:
-            max_scale_areas = [pref for pref, scale in max_scale_region.items() if scale == max_scale]
-            text += f"最大{convert_scale_to_text(max_scale)}を{'、'.join(max_scale_areas)}で観測しました。"
+            areas = [pref for pref, scale in max_scale_region.items() if scale == max_scale]
+            text += f"最大{convert_scale_to_text(max_scale)}を{'、'.join(areas)}で観測しました。"
 
-        other_scales = {scale: [] for scale in set(max_scale_region.values()) if scale < max_scale}
+        other_scales = {s: [] for s in set(max_scale_region.values()) if s < max_scale}
         for pref, scale in max_scale_region.items():
-            if scale in other_scales:
+            if scale < max_scale:
                 other_scales[scale].append(pref)
 
         if other_scales:
