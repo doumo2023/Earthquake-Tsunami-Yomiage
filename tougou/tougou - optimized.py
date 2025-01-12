@@ -2,9 +2,9 @@ import requests
 import time
 from datetime import datetime
 
-def fetch_data(url, params=None):
+def fetch_data(url, params=None, timeout=5):
     try:
-        response = requests.get(url, params=params, timeout=5)
+        response = requests.get(url, params=params, timeout=timeout)
         response.raise_for_status()
         return response.json()
     except requests.RequestException as e:
@@ -50,9 +50,9 @@ def process_tsunami_data(data, seen_ids):
     }
 
     for item in sorted(data, key=lambda x: x.get('time', ''), reverse=True):
-        if (item_id := item.get("id")) in seen_ids:
+        if item.get("id") in seen_ids:
             continue
-        seen_ids.add(item_id)
+        seen_ids.add(item["id"])
         if item.get("cancelled", False):
             messages.append("津波情報。津波予報が解除されました。")
             continue
@@ -97,16 +97,12 @@ def convert_scale_to_text(scale):
     }.get(scale, "不明")
 
 def convert_tsunami(tsunami, domestic=True):
-    domestic_texts = {
+    texts = {
         "None": "この地震による津波の心配はありません。",
         "Checking": "津波の有無については現在調査中です。今後の情報に警戒してください。",
         "NonEffective": "この地震により若干の海面変動が予想されますが、津波被害の心配はありません。",
         "Watch": "この地震により、津波注意報が発表されました。",
-        "Warning": "この地震により、現在津波情報等を発表中です。"
-    }
-    foreign_texts = {
-        "None": "この地震による津波の心配はありません。",
-        "Checking": "津波の有無については現在調査中です。今後の情報に警戒してください。",
+        "Warning": "この地震により、現在津波情報等を発表中です。",
         "NonEffectiveNearby": "震源の近傍では小さな津波が発生するかもしれませんが、被害の心配はありません。",
         "WarningNearby": "震源の近傍では津波発生の可能性があります。",
         "WarningPacific": "太平洋では津波の発生の可能性があります。",
@@ -115,7 +111,7 @@ def convert_tsunami(tsunami, domestic=True):
         "WarningIndianWide": "インド洋の広域で津波の可能性があります。",
         "Potential": "一般にこの規模では津波の可能性があります。"
     }
-    return (domestic_texts if domestic else foreign_texts).get(tsunami, "")
+    return texts.get(tsunami, "")
 
 def convert_type(type_str):
     return {
@@ -203,10 +199,11 @@ def main():
 
         earthquake_data = fetch_data(urls['earthquake'])
         if earthquake_data:
-            data_id = earthquake_data[0].get('id')
-            if data_id != latest_earthquake_id:
-                latest_earthquake_id = data_id
-                display_earthquake_info(earthquake_data[0])
+            for earthquake in earthquake_data:
+                data_id = earthquake.get('id')
+                if data_id != latest_earthquake_id:
+                    latest_earthquake_id = data_id
+                    display_earthquake_info(earthquake)
 
         time.sleep(2)
 
