@@ -17,7 +17,9 @@ Soundsフォルダには、初期では無音が入っています。
 
 緊急地震速報（予報）→"Eewforecast.mp3"
 
-津波情報→"Tsunami.mp3"
+津波情報発表→"Tsunami.mp3"
+
+津波情報解除→"Tsunamicancel.mp3"
 
 震度速報→"ScalePrompt.mp3"
 
