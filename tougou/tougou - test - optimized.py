@@ -5,9 +5,16 @@ from playsound import playsound
 
 SOUNDS_DIR = "./Sounds"
 SOUND_FILES = {
-    "EEW": "Eew.mp3",
+    "EEWWarning": "Eewwarning.mp3",
+    "EEWForecast": "Eewforecast.mp3",
     "Tsunami": "Tsunami.mp3",
+    "Tsunamicancel": "Tsunamicancel.mp3",
     "Earthquake": "Earthquake.mp3",
+    "ScalePrompt": "ScalePrompt.mp3",
+    "Destination": "Destination.mp3",
+    "ScaleAndDestination": "Earthquake.mp3",
+    "DetailScale": "Earthquake.mp3",
+    "Foreign": "Foreign.mp3",
 }
 
 def fetch_data(url, params=None, timeout=5):
@@ -55,7 +62,8 @@ def process_eew_data(data, last_message):
     )
     
     if message != last_message:
-        play_sound("EEW")
+        sound_event = "EEWWarning" if data.get('isWarn') else "EEWForecast"
+        play_sound(sound_event)
         
     return message if message != last_message else None
 
@@ -74,6 +82,7 @@ def process_tsunami_data(data, seen_ids):
         seen_ids.add(item["id"])
         if item.get("cancelled", False):
             messages.append("津波情報。津波予報が解除されました。")
+            play_sound("Tsunamicancel")
             continue
 
         warnings = {level: [] for level in warning_levels}
@@ -193,7 +202,7 @@ def display_earthquake_info(data):
 
     print(text)
     speak_bouyomi(text)
-    play_sound("Earthquake")
+    play_sound(data.get('issue', {}).get('type', 'Other'))
 
 def main():
     urls = {
