@@ -1,5 +1,7 @@
 # Earthquake-Tsunami-Yomiage
-P2P地震情報 APIとWolfx APIを使って読み上げができるソフトです。
+地震情報、津波情報、緊急地震速報の読み上げができるソフトです。
+
+P2P地震情報API、Wolfx APIを使用しています。
 
 起動時、動作確認用に一度、最新の情報を読み上げます。
 
