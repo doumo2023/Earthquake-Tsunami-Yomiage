@@ -1,12 +1,6 @@
 # Earthquake-Tsunami-Yomiage
 地震情報、津波情報、緊急地震速報の読み上げができるソフトです。
 
-P2P地震情報API、Wolfx APIを使用しています。
-
-起動時、動作確認用に一度、最新の情報を読み上げます。
-
-略称はETY(そのまま)
-
 ※P2P-Earthquake-Yomiageから名前を変更しました。
 
 ## 音声について
@@ -54,3 +48,12 @@ Soundsフォルダには、初期では無音が入っています。
 ## 受信したい情報
 
 ・今はなし
+
+## 取得先
+P2P地震情報 API v2
+
+https://www.p2pquake.net/develop/json_api_v2/#/
+
+Wolfx API
+
+https://wolfx.jp/apidoc
