@@ -1,7 +1,9 @@
-import requests
 import time
 from datetime import datetime
 from playsound import playsound
+from websocket import WebSocketApp
+import json
+import requests
 
 SOUNDS_DIR = "./Sounds"
 SOUND_FILES = {
@@ -9,22 +11,12 @@ SOUND_FILES = {
     "EEWForecast": "Eewforecast.mp3",
     "Tsunami": "Tsunami.mp3",
     "Tsunamicancel": "Tsunamicancel.mp3",
-    "Earthquake": "Earthquake.mp3",
     "ScalePrompt": "ScalePrompt.mp3",
     "Destination": "Destination.mp3",
     "ScaleAndDestination": "Earthquake.mp3",
     "DetailScale": "Earthquake.mp3",
     "Foreign": "Foreign.mp3",
 }
-
-def fetch_data(url, params=None, timeout=5):
-    try:
-        response = requests.get(url, params=params, timeout=timeout)
-        response.raise_for_status()
-        return response.json()
-    except requests.RequestException as e:
-        print(f"データ取得エラー: {e}")
-        return None
 
 def play_sound(event_type):
     sound_file = SOUND_FILES.get(event_type)
@@ -48,26 +40,23 @@ def process_eew_data(data, last_message):
     if not data:
         return None
 
-    title_suffix = "警報" if data.get('isWarn') else "予報"
-    max_intensity = data.get('MaxIntensity', '不明')
-    hypocenter = data.get('Hypocenter', '不明')
-    depth = data.get('Depth', '不明')
-    magnitude = data.get('Magunitude', '不明')
-    report_type = f"最終報" if data.get('isFinal') else f"第{data.get('Serial', '不明')}報"
+    if data.get('isCancel', False):
+        message = "この緊急地震速報は取り消されました"
+        return message
 
     message = (
-        f"緊急地震速報（{title_suffix}）{report_type}。推定最大震度は{max_intensity}です。"
-        f"震源地は{hypocenter}、震源の深さは{depth}キロメートル、"
-        f"地震の規模を示すマグニチュードは{magnitude}と推定されています。"
+        f"緊急地震速報（{'警報' if data.get('isWarn') else '予報'}）{'最終報' if data.get('isFinal') else f'第{data.get('Serial', '不明')}報'}。"
+        f"推定最大震度は{data.get('MaxIntensity', '不明')}です。"
+        f"震源地は{data.get('Hypocenter', '不明')}、震源の深さは{data.get('Depth', '不明')}キロメートル、"
+        f"地震の規模を示すマグニチュードは{data.get('Magunitude', '不明')}と推定されています。"
     )
     
     if message != last_message:
-        sound_event = "EEWWarning" if data.get('isWarn') else "EEWForecast"
-        play_sound(sound_event)
+        play_sound("EEWWarning" if data.get('isWarn') else "EEWForecast")
         
     return message if message != last_message else None
 
-def process_tsunami_data(data, seen_ids):
+def process_tsunami_data(data):
     messages, warning_levels = [], ["大津波警報", "津波警報", "津波注意報"]
     grade_map = {"MajorWarning": "大津波警報", "Warning": "津波警報", "Watch": "津波注意報"}
     condition_map = {
@@ -77,9 +66,6 @@ def process_tsunami_data(data, seen_ids):
     }
 
     for item in sorted(data, key=lambda x: x.get('time', ''), reverse=True):
-        if item.get("id") in seen_ids:
-            continue
-        seen_ids.add(item["id"])
         if item.get("cancelled", False):
             messages.append("津波情報。津波予報が解除されました。")
             play_sound("Tsunamicancel")
@@ -93,15 +79,15 @@ def process_tsunami_data(data, seen_ids):
             arrival_time = "不明"
             if (arrival_raw := area['firstHeight'].get('arrivalTime', '不明')) != "不明":
                 try:
-                    day, (hour, minute) = int(arrival_raw.split(" ")[0].split("/")[-1]), arrival_raw.split(" ")[1].split(":")[:2]
-                    arrival_time = f"{day}日{hour}時{minute}分"
+                    day, (hour, minute) = map(int, arrival_raw.split(" ")[1].split(":")[:2])
+                    arrival_time = f"{arrival_raw.split(' ')[0].split('/')[-1]}日{hour}時{minute}分"
                 except ValueError:
                     pass
             warnings[grade].append({
                 "地域": area['name'],
                 "予想の高さ": area.get('maxHeight', {}).get('description', '不明'),
                 "到達予測": condition_map.get(
-                    condition := area['firstHeight'].get('condition', ''),
+                    area['firstHeight'].get('condition', ''),
                     f"早いところで、{arrival_time}ごろ到達とみられます" if arrival_time != "不明" else ""
                 )
             })
@@ -110,7 +96,7 @@ def process_tsunami_data(data, seen_ids):
             if warnings[grade_name]:
                 messages.append("\n".join(
                     [f"津波情報。{grade_name} が発表されました。", f"{grade_name} が発表されている地域をお伝えします。"] +
-                    [f"{info['地域']}、予想の高さ {info['予想の高さ']}、{info['到達予測']}" for info in warnings[grade_name]]
+                    [f"{info['地域']}、予想の高さ{info['予想の高さ']}、{info['到達予測']}" for info in warnings[grade_name]]
                 ))
 
     for message in messages:
@@ -204,37 +190,40 @@ def display_earthquake_info(data):
     speak_bouyomi(text)
     play_sound(data.get('issue', {}).get('type', 'Other'))
 
+def on_message(ws, message):
+    data = json.loads(message)
+    if 'code' in data and data['code'] == 551:
+        display_earthquake_info(data)
+    elif 'code' in data and data['code'] == 552:
+        process_tsunami_data([data])
+
+def on_error(ws, error):
+    print(f"WebSocket error: {error}")
+
 def main():
-    urls = {
-        'eew': "https://api.wolfx.jp/jma_eew.json",
-        'tsunami': "https://api-v2-sandbox.p2pquake.net/v2/history?codes=552&limit=1",
-        'earthquake': "https://api-v2-sandbox.p2pquake.net/v2/history?codes=551&limit=1"
-    }
+    wolfx_url = "wss://ws-api.wolfx.jp/jma_eew"
+    websocket_url = "wss://api-realtime-sandbox.p2pquake.net/v2/ws"
 
-    seen_tsunami_ids = set()
     last_eew_message = None
-    latest_earthquake_id = None
 
-    while True:
-        eew_data = fetch_data(urls['eew'])
-        eew_message = process_eew_data(eew_data, last_eew_message)
+    def on_eew_message(ws, message):
+        nonlocal last_eew_message
+        data = json.loads(message)
+        eew_message = process_eew_data(data, last_eew_message)
         if eew_message:
             print(eew_message)
             speak_bouyomi(eew_message)
             last_eew_message = eew_message
 
-        tsunami_data = fetch_data(urls['tsunami'])
-        if tsunami_data:
-            process_tsunami_data(tsunami_data, seen_tsunami_ids)
+    def run_websocket(url, on_message):
+        ws = WebSocketApp(url, on_message=on_message, on_error=on_error)
+        ws.run_forever()
 
-        earthquake_data = fetch_data(urls['earthquake'])
-        if earthquake_data:
-            for earthquake in earthquake_data:
-                data_id = earthquake.get('id')
-                if data_id != latest_earthquake_id:
-                    latest_earthquake_id = data_id
-                    display_earthquake_info(earthquake)
+    import threading
+    threading.Thread(target=run_websocket, args=(wolfx_url, on_eew_message)).start()
+    threading.Thread(target=run_websocket, args=(websocket_url, on_message)).start()
 
+    while True:
         time.sleep(2)
 
 if __name__ == "__main__":
