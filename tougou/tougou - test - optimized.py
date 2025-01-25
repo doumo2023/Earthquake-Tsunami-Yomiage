@@ -194,6 +194,8 @@ def main():
     def on_eew_message(ws, message):
         nonlocal last_eew_message
         data = json.loads(message)
+        if data.get('type') == 'heartbeat':
+            return
         if eew_message := process_eew_data(data, last_eew_message):
             print(eew_message)
             speak_bouyomi(eew_message)
