@@ -4,6 +4,7 @@ from playsound import playsound
 from websocket import WebSocketApp
 import json
 import requests
+import threading
 
 SOUNDS_DIR = "./Sounds"
 SOUND_FILES = {
@@ -73,8 +74,9 @@ def process_tsunami_data(data):
             arrival_time = "不明"
             if (arrival_raw := area['firstHeight'].get('arrivalTime', '不明')) != "不明":
                 try:
-                    day, (hour, minute) = map(int, arrival_raw.split(" ")[1].split(":")[:2])
-                    arrival_time = f"{arrival_raw.split(' ')[0].split('/')[-1]}日{hour}時{minute}分"
+                    date_part, time_part = arrival_raw.split(" ")
+                    hour, minute = map(int, time_part.split(":")[:2])
+                    arrival_time = f"{date_part.split('/')[-1]}日{hour}時{minute}分"
                 except ValueError:
                     pass
             warnings[grade].append({
@@ -103,7 +105,9 @@ def convert_scale_to_text(scale):
         55: "震度6弱", 60: "震度6強", 70: "震度7"
     }.get(scale, "不明")
 
-def convert_tsunami(tsunami, domestic=True):
+def convert_tsunami(tsunami, foreign_tsunami=None, domestic=True):
+    if foreign_tsunami is None and not domestic:
+        return ""
     texts = {
         "None": "この地震による津波の心配はありません。",
         "Checking": "津波の有無については現在調査中です。今後の情報に警戒してください。",
@@ -190,19 +194,16 @@ def main():
     def on_eew_message(ws, message):
         nonlocal last_eew_message
         data = json.loads(message)
-        eew_message = process_eew_data(data, last_eew_message)
-        if eew_message:
+        if eew_message := process_eew_data(data, last_eew_message):
             print(eew_message)
             speak_bouyomi(eew_message)
             last_eew_message = eew_message
+
     def run_websocket(url, on_message):
-        ws = WebSocketApp(url, on_message=on_message, on_error=on_error)
-        ws.run_forever()
-    import threading
+        WebSocketApp(url, on_message=on_message, on_error=on_error).run_forever()
+
     threading.Thread(target=run_websocket, args=(wolfx_url, on_eew_message)).start()
     threading.Thread(target=run_websocket, args=(websocket_url, on_message)).start()
-    while True:
-        time.sleep(2)
 
 if __name__ == "__main__":
     main()
