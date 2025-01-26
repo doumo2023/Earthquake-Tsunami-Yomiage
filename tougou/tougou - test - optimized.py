@@ -90,7 +90,7 @@ def process_tsunami_data(data):
         for grade_name in warning_levels:
             if warnings[grade_name]:
                 messages.append("\n".join(
-                    [f"津波情報。{grade_name} が発表されました。", f"{grade_name} が発表されている地域をお伝えします。"] +
+                    [f"津波情報。{grade_name}が発表されました。", f"{grade_name}が発表されている地域をお伝えします。"] +
                     [f"{info['地域']}、予想の高さ{info['予想の高さ']}、{info['到達予測']}" for info in warnings[grade_name]]
                 ))
     for message in messages:
