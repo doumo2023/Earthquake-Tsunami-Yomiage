@@ -54,16 +54,18 @@ def process_eew_data(data, last_message):
     return message if message != last_message else None
 
 def process_tsunami_data(data):
-    messages, warning_levels = [], ["大津波警報", "津波警報", "津波注意報"]
+    warning_levels = ["大津波警報", "津波警報", "津波注意報"]
     grade_map = {"MajorWarning": "大津波警報", "Warning": "津波警報", "Watch": "津波注意報"}
     condition_map = {
         "ただちに津波来襲と予測": "ただちに津波来襲と予測されます",
         "津波到達中と推測": "津波到達中と推測されます",
         "第１波の到達を確認": "第１波の到達を確認しました"
     }
+    combined_message = ""
+    first_alert = True
     for item in sorted(data, key=lambda x: x.get('time', ''), reverse=True):
         if item.get("cancelled", False):
-            messages.append("津波情報。津波予報が解除されました。")
+            combined_message += "津波情報。津波予報が解除されました。\n"
             play_sound("Tsunamicancel")
             continue
         warnings = {level: [] for level in warning_levels}
@@ -71,17 +73,19 @@ def process_tsunami_data(data):
             grade = grade_map.get(area['grade'], '')
             if not grade:
                 continue
+            arrival_raw = area['firstHeight'].get('arrivalTime', '不明')
             arrival_time = "不明"
-            if (arrival_raw := area['firstHeight'].get('arrivalTime', '不明')) != "不明":
+            if arrival_raw != "不明":
                 try:
                     date_part, time_part = arrival_raw.split(" ")
+                    day = int(date_part.split("/")[-1])
                     hour, minute = map(int, time_part.split(":")[:2])
-                    arrival_time = f"{date_part.split('/')[-1]}日{hour}時{minute}分"
+                    arrival_time = f"{day}日{hour}時{minute}分"
                 except ValueError:
                     pass
             warnings[grade].append({
                 "地域": area['name'],
-                "予想の高さ": area.get('maxHeight', {}).get('description', '不明'),
+                "予想の高さ": area.get('maxHeight',{}).get('description','不明'),
                 "到達予測": condition_map.get(
                     area['firstHeight'].get('condition', ''),
                     f"早いところで、{arrival_time}ごろ到達とみられます" if arrival_time != "不明" else ""
@@ -89,13 +93,16 @@ def process_tsunami_data(data):
             })
         for grade_name in warning_levels:
             if warnings[grade_name]:
-                messages.append("\n".join(
-                    [f"津波情報。{grade_name}が発表されました。", f"{grade_name}が発表されている地域をお伝えします。"] +
+                if first_alert:
+                    combined_message += f"津波情報。{grade_name}が発表されました。\n"
+                    first_alert = False
+                combined_message += f"{grade_name}が発表されている地域をお伝えします。\n"
+                combined_message += "\n".join(
                     [f"{info['地域']}、予想の高さ{info['予想の高さ']}、{info['到達予測']}" for info in warnings[grade_name]]
-                ))
-    for message in messages:
-        print(message + "\n")
-        speak_bouyomi(message)
+                ) + "\n"
+    if combined_message:
+        print(combined_message)
+        speak_bouyomi(combined_message)
         play_sound("Tsunami")
 
 def convert_scale_to_text(scale):
