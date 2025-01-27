@@ -1,7 +1,10 @@
-import requests
 import time
 from datetime import datetime
 from playsound import playsound
+from websocket import WebSocketApp
+import json
+import requests
+import threading
 
 SOUNDS_DIR = "./Sounds"
 SOUND_FILES = {
@@ -15,15 +18,6 @@ SOUND_FILES = {
     "DetailScale": "Earthquake.mp3",
     "Foreign": "Foreign.mp3",
 }
-
-def fetch_data(url, params=None, timeout=5):
-    try:
-        response = requests.get(url, params=params, timeout=timeout)
-        response.raise_for_status()
-        return response.json()
-    except requests.RequestException as e:
-        print(f"データ取得エラー: {e}")
-        return None
 
 def play_sound(event_type):
     sound_file = SOUND_FILES.get(event_type)
@@ -46,75 +40,69 @@ def speak_bouyomi(text='ゆっくりしていってね', voice=0, volume=-1, spe
 def process_eew_data(data, last_message):
     if not data:
         return None
-
-    title_suffix = "警報" if data.get('isWarn') else "予報"
-    max_intensity = data.get('MaxIntensity', '不明')
-    hypocenter = data.get('Hypocenter', '不明')
-    depth = data.get('Depth', '不明')
-    magnitude = data.get('Magunitude', '不明')
-    report_type = f"最終報" if data.get('isFinal') else f"第{data.get('Serial', '不明')}報"
-
+    if data.get('isCancel', False):
+        return "この緊急地震速報は取り消されました"
     message = (
-        f"緊急地震速報（{title_suffix}）{report_type}。推定最大震度は{max_intensity}です。"
-        f"震源地は{hypocenter}、震源の深さは{depth}キロメートル、"
-        f"地震の規模を示すマグニチュードは{magnitude}と推定されています。"
+        f"緊急地震速報（{'警報' if data.get('isWarn') else '予報'}）"
+        f"{'最終報' if data.get('isFinal') else f'第{data.get('Serial', '不明')}報'}。"
+        f"推定最大震度は{data.get('MaxIntensity', '不明')}です。"
+        f"震源地は{data.get('Hypocenter', '不明')}、震源の深さは{data.get('Depth', '不明')}キロメートル、"
+        f"地震の規模を示すマグニチュードは{data.get('Magunitude', '不明')}と推定されています。"
     )
-    
     if message != last_message:
-        sound_event = "EEWWarning" if data.get('isWarn') else "EEWForecast"
-        play_sound(sound_event)
-        
+        play_sound("EEWWarning" if data.get('isWarn') else "EEWForecast")
     return message if message != last_message else None
 
-def process_tsunami_data(data, seen_ids):
-    messages, warning_levels = [], ["大津波警報", "津波警報", "津波注意報"]
+def process_tsunami_data(data):
+    warning_levels = ["大津波警報", "津波警報", "津波注意報"]
     grade_map = {"MajorWarning": "大津波警報", "Warning": "津波警報", "Watch": "津波注意報"}
     condition_map = {
         "ただちに津波来襲と予測": "ただちに津波来襲と予測されます",
         "津波到達中と推測": "津波到達中と推測されます",
         "第１波の到達を確認": "第１波の到達を確認しました"
     }
-
+    combined_message = ""
+    first_alert = True
     for item in sorted(data, key=lambda x: x.get('time', ''), reverse=True):
-        if item.get("id") in seen_ids:
-            continue
-        seen_ids.add(item["id"])
         if item.get("cancelled", False):
-            messages.append("津波情報。津波予報が解除されました。")
+            combined_message += "津波情報。津波予報が解除されました。\n"
             play_sound("Tsunamicancel")
             continue
-
         warnings = {level: [] for level in warning_levels}
         for area in item.get("areas", []):
             grade = grade_map.get(area['grade'], '')
             if not grade:
                 continue
+            arrival_raw = area['firstHeight'].get('arrivalTime', '不明')
             arrival_time = "不明"
-            if (arrival_raw := area['firstHeight'].get('arrivalTime', '不明')) != "不明":
+            if arrival_raw != "不明":
                 try:
-                    day, (hour, minute) = int(arrival_raw.split(" ")[0].split("/")[-1]), arrival_raw.split(" ")[1].split(":")[:2]
+                    date_part, time_part = arrival_raw.split(" ")
+                    day = int(date_part.split("/")[-1])
+                    hour, minute = map(int, time_part.split(":")[:2])
                     arrival_time = f"{day}日{hour}時{minute}分"
                 except ValueError:
                     pass
             warnings[grade].append({
                 "地域": area['name'],
-                "予想の高さ": area.get('maxHeight', {}).get('description', '不明'),
+                "予想の高さ": area.get('maxHeight',{}).get('description','不明'),
                 "到達予測": condition_map.get(
-                    condition := area['firstHeight'].get('condition', ''),
+                    area['firstHeight'].get('condition', ''),
                     f"早いところで、{arrival_time}ごろ到達とみられます" if arrival_time != "不明" else ""
                 )
             })
-
         for grade_name in warning_levels:
             if warnings[grade_name]:
-                messages.append("\n".join(
-                    [f"津波情報。{grade_name} が発表されました。", f"{grade_name} が発表されている地域をお伝えします。"] +
+                if first_alert:
+                    combined_message += f"津波情報。{grade_name}が発表されました。\n"
+                    first_alert = False
+                combined_message += f"{grade_name}が発表されている地域をお伝えします。\n"
+                combined_message += "\n".join(
                     [f"{info['地域']}、予想の高さ{info['予想の高さ']}、{info['到達予測']}" for info in warnings[grade_name]]
-                ))
-
-    for message in messages:
-        print(message + "\n")
-        speak_bouyomi(message)
+                ) + "\n"
+    if combined_message:
+        print(combined_message)
+        speak_bouyomi(combined_message)
         play_sound("Tsunami")
 
 def convert_scale_to_text(scale):
@@ -124,7 +112,9 @@ def convert_scale_to_text(scale):
         55: "震度6弱", 60: "震度6強", 70: "震度7"
     }.get(scale, "不明")
 
-def convert_tsunami(tsunami, domestic=True):
+def convert_tsunami(tsunami, foreign_tsunami=None, domestic=True):
+    if foreign_tsunami is None and not domestic:
+        return ""
     texts = {
         "None": "この地震による津波の心配はありません。",
         "Checking": "津波の有無については現在調査中です。今後の情報に警戒してください。",
@@ -154,13 +144,11 @@ def convert_type(type_str):
 def display_earthquake_info(data):
     type_info = convert_type(data.get('issue', {}).get('type', 'Other'))
     text = f"{type_info}。"
-
     earthquake = data.get('earthquake', {})
     time = earthquake.get('time', '不明')
     if time != '不明':
         dt = datetime.strptime(time, '%Y/%m/%d %H:%M:%S')
         text += f"{dt.hour}時{dt.minute}分ごろ地震がありました。"
-
     hypocenter = earthquake.get('hypocenter', {})
     if hypocenter.get('name'):
         text += f"震源地は{hypocenter['name']}、"
@@ -168,13 +156,10 @@ def display_earthquake_info(data):
         text += f"震源の深さは{'ごく浅い' if depth == 0 else f'{depth}キロメートル'}。"
     if (magnitude := hypocenter.get('magnitude', -1)) >= 0:
         text += f"地震の規模を示すマグニチュードは{magnitude:.1f}と推定されています。"
-
     text += convert_tsunami(earthquake.get('domesticTsunami', ''), domestic=True)
-
     foreign_tsunami = earthquake.get('foreignTsunami', None)
     if foreign_tsunami not in [None, "Unknown"]:
         text += convert_tsunami(foreign_tsunami, domestic=False)
-
     points = data.get('points', [])
     if points:
         max_scale_region = {}
@@ -182,59 +167,52 @@ def display_earthquake_info(data):
             if (scale := point.get('scale', -1)) > 0:
                 pref = point.get('pref', '不明')
                 max_scale_region[pref] = max(max_scale_region.get(pref, 0), scale)
-
         max_scale = max(max_scale_region.values(), default=0)
         if max_scale:
             areas = [pref for pref, scale in max_scale_region.items() if scale == max_scale]
             text += f"最大{convert_scale_to_text(max_scale)}を{'、'.join(areas)}で観測しました。"
-
         other_scales = {s: [] for s in set(max_scale_region.values()) if s < max_scale}
         for pref, scale in max_scale_region.items():
             if scale < max_scale:
                 other_scales[scale].append(pref)
-
         if other_scales:
             text += "また、" + "、".join(
                 f"{convert_scale_to_text(scale)}を{'、'.join(prefs)}"
                 for scale, prefs in sorted(other_scales.items(), reverse=True)
             ) + "で観測しました。"
-
     print(text)
     speak_bouyomi(text)
     play_sound(data.get('issue', {}).get('type', 'Other'))
 
+def on_message(ws, message):
+    data = json.loads(message)
+    if 'code' in data and data['code'] == 551:
+        display_earthquake_info(data)
+    elif 'code' in data and data['code'] == 552:
+        process_tsunami_data([data])
+
+def on_error(ws, error):
+    print(f"WebSocket error: {error}")
+
 def main():
-    urls = {
-        'eew': "https://api.wolfx.jp/jma_eew.json",
-        'tsunami': "https://api.p2pquake.net/v2/history?codes=552&limit=1",
-        'earthquake': "https://api.p2pquake.net/v2/history?codes=551&limit=1"
-    }
-
-    seen_tsunami_ids = set()
+    wolfx_url = "wss://ws-api.wolfx.jp/jma_eew"
+    websocket_url = "wss://api.p2pquake.net/v2/ws"
     last_eew_message = None
-    latest_earthquake_id = None
-
-    while True:
-        eew_data = fetch_data(urls['eew'])
-        eew_message = process_eew_data(eew_data, last_eew_message)
-        if eew_message:
+    def on_eew_message(ws, message):
+        nonlocal last_eew_message
+        data = json.loads(message)
+        if data.get('type') == 'heartbeat':
+            return
+        if eew_message := process_eew_data(data, last_eew_message):
             print(eew_message)
             speak_bouyomi(eew_message)
             last_eew_message = eew_message
 
-        tsunami_data = fetch_data(urls['tsunami'])
-        if tsunami_data:
-            process_tsunami_data(tsunami_data, seen_tsunami_ids)
+    def run_websocket(url, on_message):
+        WebSocketApp(url, on_message=on_message, on_error=on_error).run_forever()
 
-        earthquake_data = fetch_data(urls['earthquake'])
-        if earthquake_data:
-            for earthquake in earthquake_data:
-                data_id = earthquake.get('id')
-                if data_id != latest_earthquake_id:
-                    latest_earthquake_id = data_id
-                    display_earthquake_info(earthquake)
-
-        time.sleep(2)
+    threading.Thread(target=run_websocket, args=(wolfx_url, on_eew_message)).start()
+    threading.Thread(target=run_websocket, args=(websocket_url, on_message)).start()
 
 if __name__ == "__main__":
     main()
