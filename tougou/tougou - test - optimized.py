@@ -1,10 +1,10 @@
-import time
-from datetime import datetime
-from playsound import playsound
-from websocket import WebSocketApp
 import json
-import requests
-import threading
+import aiohttp
+import asyncio
+from playsound import playsound
+from datetime import datetime
+from concurrent.futures import ThreadPoolExecutor
+from numba import jit
 
 SOUNDS_DIR = "./Sounds"
 SOUND_FILES = {
@@ -19,24 +19,26 @@ SOUND_FILES = {
     "Foreign": "Foreign.mp3",
 }
 
-def play_sound(event_type):
+executor = ThreadPoolExecutor(max_workers=10)
+
+async def play_sound(event_type):
     sound_file = SOUND_FILES.get(event_type)
     if sound_file:
+        loop = asyncio.get_event_loop()
+        await loop.run_in_executor(executor, lambda: playsound(f"{SOUNDS_DIR}/{sound_file}"))
+
+async def speak_bouyomi(text, voice=0, volume=-1, speed=-1, tone=-1):
+    async with aiohttp.ClientSession() as session:
         try:
-            playsound(f"{SOUNDS_DIR}/{sound_file}")
-        except Exception as e:
-            print(f"音声再生エラー: {e}")
+            async with session.get('http://localhost:50080/Talk', params={
+                'text': text, 'voice': voice, 'volume': volume, 'speed': speed, 'tone': tone
+            }, timeout=2) as res:
+                return res.status == 200
+        except aiohttp.ClientError as e:
+            print(f"棒読みちゃんエラー: {e}")
+            return False
 
-def speak_bouyomi(text='ゆっくりしていってね', voice=0, volume=-1, speed=-1, tone=-1):
-    try:
-        res = requests.get('http://localhost:50080/Talk', params={
-            'text': text, 'voice': voice, 'volume': volume, 'speed': speed, 'tone': tone
-        }, timeout=2)
-        return res.status_code == 200
-    except requests.RequestException as e:
-        print(f"棒読みちゃんエラー: {e}")
-        return False
-
+@jit(nopython=True)
 def process_eew_data(data, last_message):
     if not data:
         return None
@@ -49,11 +51,9 @@ def process_eew_data(data, last_message):
         f"震源地は{data.get('Hypocenter', '不明')}、震源の深さは{data.get('Depth', '不明')}キロメートル、"
         f"地震の規模を示すマグニチュードは{data.get('Magunitude', '不明')}と推定されています。"
     )
-    if message != last_message:
-        play_sound("EEWWarning" if data.get('isWarn') else "EEWForecast")
     return message if message != last_message else None
 
-def process_tsunami_data(data):
+async def process_tsunami_data(data):
     warning_levels = ["大津波警報", "津波警報", "津波注意報"]
     grade_map = {"MajorWarning": "大津波警報", "Warning": "津波警報", "Watch": "津波注意報"}
     condition_map = {
@@ -66,7 +66,7 @@ def process_tsunami_data(data):
     for item in sorted(data, key=lambda x: x.get('time', ''), reverse=True):
         if item.get("cancelled", False):
             combined_message += "津波情報。津波予報が解除されました。\n"
-            play_sound("Tsunamicancel")
+            await play_sound("Tsunamicancel")
             continue
         warnings = {level: [] for level in warning_levels}
         for area in item.get("areas", []):
@@ -102,8 +102,8 @@ def process_tsunami_data(data):
                 ) + "\n"
     if combined_message:
         print(combined_message)
-        speak_bouyomi(combined_message)
-        play_sound("Tsunami")
+        await speak_bouyomi(combined_message)
+        await play_sound("Tsunami")
 
 def convert_scale_to_text(scale):
     return {
@@ -141,7 +141,7 @@ def convert_type(type_str):
         "Other": "地震情報"
     }.get(type_str, "地震情報")
 
-def display_earthquake_info(data):
+async def display_earthquake_info(data):
     type_info = convert_type(data.get('issue', {}).get('type', 'Other'))
     text = f"{type_info}。"
     earthquake = data.get('earthquake', {})
@@ -181,38 +181,35 @@ def display_earthquake_info(data):
                 for scale, prefs in sorted(other_scales.items(), reverse=True)
             ) + "で観測しました。"
     print(text)
-    speak_bouyomi(text)
-    play_sound(data.get('issue', {}).get('type', 'Other'))
+    await speak_bouyomi(text)
+    await play_sound(data.get('issue', {}).get('type', 'Other'))
 
-def on_message(ws, message):
+async def on_message(ws, message):
     data = json.loads(message)
     if 'code' in data and data['code'] == 551:
-        display_earthquake_info(data)
+        await display_earthquake_info(data)
     elif 'code' in data and data['code'] == 552:
-        process_tsunami_data([data])
+        await process_tsunami_data([data])
 
 def on_error(ws, error):
     print(f"WebSocket error: {error}")
 
-def main():
+async def run_websocket(url, on_message):
+    async with aiohttp.ClientSession() as session:
+        async with session.ws_connect(url) as ws:
+            async for msg in ws:
+                if msg.type == aiohttp.WSMsgType.TEXT:
+                    await on_message(ws, msg.data)
+                elif msg.type == aiohttp.WSMsgType.ERROR:
+                    on_error(ws, msg.data)
+
+async def main():
     wolfx_url = "wss://ws-api.wolfx.jp/jma_eew"
     websocket_url = "wss://api-realtime-sandbox.p2pquake.net/v2/ws"
-    last_eew_message = None
-    def on_eew_message(ws, message):
-        nonlocal last_eew_message
-        data = json.loads(message)
-        if data.get('type') == 'heartbeat':
-            return
-        if eew_message := process_eew_data(data, last_eew_message):
-            print(eew_message)
-            speak_bouyomi(eew_message)
-            last_eew_message = eew_message
-
-    def run_websocket(url, on_message):
-        WebSocketApp(url, on_message=on_message, on_error=on_error).run_forever()
-
-    threading.Thread(target=run_websocket, args=(wolfx_url, on_eew_message)).start()
-    threading.Thread(target=run_websocket, args=(websocket_url, on_message)).start()
+    await asyncio.gather(
+        run_websocket(wolfx_url, on_message),
+        run_websocket(websocket_url, on_message)
+    )
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())
