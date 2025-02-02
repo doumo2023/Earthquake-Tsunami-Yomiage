@@ -4,7 +4,6 @@ import asyncio
 from playsound import playsound
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor
-from numba import jit
 
 SOUNDS_DIR = "./Sounds"
 SOUND_FILES = {
@@ -24,21 +23,18 @@ executor = ThreadPoolExecutor(max_workers=10)
 async def play_sound(event_type):
     sound_file = SOUND_FILES.get(event_type)
     if sound_file:
-        loop = asyncio.get_event_loop()
-        await loop.run_in_executor(executor, lambda: playsound(f"{SOUNDS_DIR}/{sound_file}"))
+        await asyncio.get_event_loop().run_in_executor(executor, lambda: playsound(f"{SOUNDS_DIR}/{sound_file}"))
 
 async def speak_bouyomi(text, voice=0, volume=-1, speed=-1, tone=-1):
     async with aiohttp.ClientSession() as session:
+        params = {'text': text, 'voice': voice, 'volume': volume, 'speed': speed, 'tone': tone}
         try:
-            async with session.get('http://localhost:50080/Talk', params={
-                'text': text, 'voice': voice, 'volume': volume, 'speed': speed, 'tone': tone
-            }, timeout=2) as res:
+            async with session.get('http://localhost:50080/Talk', params=params, timeout=2) as res:
                 return res.status == 200
         except aiohttp.ClientError as e:
             print(f"棒読みちゃんエラー: {e}")
             return False
 
-@jit(nopython=True)
 def process_eew_data(data, last_message):
     if not data:
         return None
@@ -61,49 +57,51 @@ async def process_tsunami_data(data):
         "津波到達中と推測": "津波到達中と推測されます",
         "第１波の到達を確認": "第１波の到達を確認しました"
     }
+
     combined_message = ""
-    first_alert = True
     for item in sorted(data, key=lambda x: x.get('time', ''), reverse=True):
         if item.get("cancelled", False):
             combined_message += "津波情報。津波予報が解除されました。\n"
             await play_sound("Tsunamicancel")
             continue
+        
         warnings = {level: [] for level in warning_levels}
         for area in item.get("areas", []):
             grade = grade_map.get(area['grade'], '')
-            if not grade:
-                continue
-            arrival_raw = area['firstHeight'].get('arrivalTime', '不明')
-            arrival_time = "不明"
-            if arrival_raw != "不明":
-                try:
-                    date_part, time_part = arrival_raw.split(" ")
-                    day = int(date_part.split("/")[-1])
-                    hour, minute = map(int, time_part.split(":")[:2])
-                    arrival_time = f"{day}日{hour}時{minute}分"
-                except ValueError:
-                    pass
+            arrival_time = parse_arrival_time(area['firstHeight'].get('arrivalTime', '不明'))
             warnings[grade].append({
                 "地域": area['name'],
-                "予想の高さ": area.get('maxHeight',{}).get('description','不明'),
-                "到達予測": condition_map.get(
-                    area['firstHeight'].get('condition', ''),
-                    f"早いところで、{arrival_time}ごろ到達とみられます" if arrival_time != "不明" else ""
-                )
+                "予想の高さ": area.get('maxHeight', {}).get('description', '不明'),
+                "到達予測": condition_map.get(area['firstHeight'].get('condition', ''), arrival_time)
             })
+
         for grade_name in warning_levels:
             if warnings[grade_name]:
-                if first_alert:
-                    combined_message += f"津波情報。{grade_name}が発表されました。\n"
-                    first_alert = False
-                combined_message += f"{grade_name}が発表されている地域をお伝えします。\n"
-                combined_message += "\n".join(
-                    [f"{info['地域']}、予想の高さ{info['予想の高さ']}、{info['到達予測']}" for info in warnings[grade_name]]
-                ) + "\n"
+                combined_message += format_warning_message(warnings, grade_name)
+    
     if combined_message:
         print(combined_message)
         await speak_bouyomi(combined_message)
         await play_sound("Tsunami")
+
+def parse_arrival_time(arrival_raw):
+    if arrival_raw == "不明":
+        return ""
+    try:
+        date_part, time_part = arrival_raw.split(" ")
+        day = int(date_part.split("/")[-1])
+        hour, minute = map(int, time_part.split(":")[:2])
+        return f"早いところで、{day}日{hour}時{minute}分ごろ到達とみられます"
+    except ValueError:
+        return ""
+
+def format_warning_message(warnings, grade_name):
+    message = f"津波情報。{grade_name}が発表されました。\n"
+    message += f"{grade_name}が発表されている地域をお伝えします。\n"
+    message += "\n".join(
+        [f"{info['地域']}、予想の高さ{info['予想の高さ']}、{info['到達予測']}" for info in warnings[grade_name]]
+    ) + "\n"
+    return message
 
 def convert_scale_to_text(scale):
     return {
@@ -162,27 +160,32 @@ async def display_earthquake_info(data):
         text += convert_tsunami(foreign_tsunami, domestic=False)
     points = data.get('points', [])
     if points:
-        max_scale_region = {}
-        for point in points:
-            if (scale := point.get('scale', -1)) > 0:
-                pref = point.get('pref', '不明')
-                max_scale_region[pref] = max(max_scale_region.get(pref, 0), scale)
-        max_scale = max(max_scale_region.values(), default=0)
-        if max_scale:
-            areas = [pref for pref, scale in max_scale_region.items() if scale == max_scale]
-            text += f"最大{convert_scale_to_text(max_scale)}を{'、'.join(areas)}で観測しました。"
-        other_scales = {s: [] for s in set(max_scale_region.values()) if s < max_scale}
-        for pref, scale in max_scale_region.items():
-            if scale < max_scale:
-                other_scales[scale].append(pref)
-        if other_scales:
-            text += "また、" + "、".join(
-                f"{convert_scale_to_text(scale)}を{'、'.join(prefs)}"
-                for scale, prefs in sorted(other_scales.items(), reverse=True)
-            ) + "で観測しました。"
+        text += format_points_info(points)
     print(text)
     await speak_bouyomi(text)
     await play_sound(data.get('issue', {}).get('type', 'Other'))
+
+def format_points_info(points):
+    max_scale_region = {}
+    for point in points:
+        if (scale := point.get('scale', -1)) > 0:
+            pref = point.get('pref', '不明')
+            max_scale_region[pref] = max(max_scale_region.get(pref, 0), scale)
+    max_scale = max(max_scale_region.values(), default=0)
+    text = ""
+    if max_scale:
+        areas = [pref for pref, scale in max_scale_region.items() if scale == max_scale]
+        text += f"最大{convert_scale_to_text(max_scale)}を{'、'.join(areas)}で観測しました。"
+    other_scales = {s: [] for s in set(max_scale_region.values()) if s < max_scale}
+    for pref, scale in max_scale_region.items():
+        if scale < max_scale:
+            other_scales[scale].append(pref)
+    if other_scales:
+        text += "また、" + "、".join(
+            f"{convert_scale_to_text(scale)}を{'、'.join(prefs)}"
+            for scale, prefs in sorted(other_scales.items(), reverse=True)
+        ) + "で観測しました。"
+    return text
 
 async def on_message(ws, message):
     data = json.loads(message)
