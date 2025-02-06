@@ -184,31 +184,30 @@ async def display_earthquake_info(data):
     await speak_bouyomi(text)
     await play_sound(data.get('issue', {}).get('type', 'Other'))
 
-async def on_message(ws, message):
+async def handle_message(ws, message, handlers):
     data = json.loads(message)
-    if 'code' in data and data['code'] == 551:
-        await display_earthquake_info(data)
-    elif 'code' in data and data['code'] == 552:
-        await process_tsunami_data([data])
+    code = data.get('code')
+    if code in handlers:
+        await handlers[code](data)
 
-def on_error(ws, error):
-    print(f"WebSocket error: {error}")
-
-async def run_websocket(url, on_message):
+async def run_websocket(url, handlers):
     async with aiohttp.ClientSession() as session:
         async with session.ws_connect(url) as ws:
             async for msg in ws:
                 if msg.type == aiohttp.WSMsgType.TEXT:
-                    await on_message(ws, msg.data)
-                elif msg.type == aiohttp.WSMsgType.ERROR:
-                    on_error(ws, msg.data)
+                    await handle_message(ws, msg.data, handlers)
 
 async def main():
-    wolfx_url = "wss://ws-api.wolfx.jp/jma_eew"
-    websocket_url = "wss://api.p2pquake.net/v2/ws"
+    p2p_handlers = {
+        551: display_earthquake_info,
+        552: lambda data: process_tsunami_data([data])
+    }
+    wolfx_handlers = {
+        None: lambda data: process_eew_data(data, None)
+    }
     await asyncio.gather(
-        run_websocket(wolfx_url, on_message),
-        run_websocket(websocket_url, on_message)
+        run_websocket("wss://api.p2pquake.net/v2/ws", p2p_handlers),
+        run_websocket("wss://ws-api.wolfx.jp/jma_eew", wolfx_handlers)
     )
 
 if __name__ == "__main__":
