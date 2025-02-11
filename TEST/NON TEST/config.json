@@ -1,0 +1,16 @@
+{
+  "SOUNDS_DIR": "./Sounds",
+  "SOUND_FILES": {
+    "EEWWarning": "Eewwarning.mp3",
+    "EEWForecast": "Eewforecast.mp3",
+    "Tsunami": "Tsunami.mp3",
+    "Tsunamicancel": "Tsunamicancel.mp3",
+    "ScalePrompt": "ScalePrompt.mp3",
+    "Destination": "Destination.mp3",
+    "ScaleAndDestination": "Earthquake.mp3",
+    "DetailScale": "Earthquake.mp3",
+    "Foreign": "Foreign.mp3"
+  },
+  "EEW_URL": "wss://ws-api.wolfx.jp/jma_eew",
+  "P2PQUAKE_URL": "wss://api.p2pquake.net/v2/ws"
+}
