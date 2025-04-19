@@ -5,7 +5,7 @@
 
 # 設定について
 
-![image](https://github.com/user-attachments/assets/1c7a0fab-36ee-4a88-957d-27e48e41f2ba)
+![image](https://github.com/user-attachments/assets/eebba772-fe8e-4524-a30c-65114de39574)
 
 ・各音声のONOFF
 
