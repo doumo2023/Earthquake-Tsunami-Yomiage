@@ -53,9 +53,9 @@ Soundsフォルダには、初期では無音が入っています。
 
 震源に関する情報→"Destination.mp3"
 
-震度・震源に関する情報→"Earthquake.mp3"
+震度・震源に関する情報→"ScaleAndDestination.mp3"
 
-各地の震度に関する情報→"Earthquake.mp3"
+各地の震度に関する情報→"DetailScale.mp3"
 
 遠地地震情報→"Foreign.mp3"
 
