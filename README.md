@@ -1,4 +1,4 @@
-# Earthquake-Tsunami-Yomiage
+# EarthquakeTsunamiYomiage
 地震情報、津波情報、緊急地震速報の読み上げができるソフトです。
 
 ![image](https://github.com/user-attachments/assets/d3edc31e-0721-4869-81eb-fc6fd161f576)
