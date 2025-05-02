@@ -11,8 +11,8 @@
 | 画面 | 説明 |
 |---|---|
 | ![トップ画面](https://github.com/user-attachments/assets/00448285-88c7-423d-b45e-5356f3638052) | 緊急地震速報・津波情報などを一括表示。 |
-| ![音声設定](https://github.com/user-attachments/assets/8b11e589-54be-408b-8033-84d9c45c062e) | 音声ごとのON/OFF、棒読みちゃんの声・音量・速度・音程の変更が可能。<br>HTTP連携用のポート番号も設定可能。 |
-| ![棒読みちゃん設定](https://github.com/user-attachments/assets/2eac4a47-ed66-4f77-8507-a4a77e4fcb5f1) | 棒読みちゃんとの連携設定画面。ポート番号の変更、ローカルHTTPサーバー機能の有効化が可能。 |
+| ![音声設定](https://github.com/user-attachments/assets/8b11e589-54be-408b-8033-84d9c45c062e) | 音声ごとのON/OFF、棒読みちゃんの声・音量・速度・音程の変更が可能。 |
+| ![棒読みちゃん設定](https://github.com/user-attachments/assets/2eac4a47-ed66-4f77-8507-a4a77e4fcb5f1) | 棒読みちゃんとの連携設定画面。ポート番号の変更が可能。 |
 
 ---
 
