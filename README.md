@@ -89,6 +89,9 @@
 - [P2P地震情報 API v2](https://www.p2pquake.net/develop/json_api_v2/#/)
 - [Wolfx API](https://wolfx.jp/apidoc)
 
+## 🔗 ETY公式サイト
+[EarthquakeTsunamiYomiage公開ページ](https://doumo2023.github.io/)
+
 ---
 
 ## 💬 不具合・要望
